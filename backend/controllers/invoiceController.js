@@ -70,38 +70,25 @@ exports.createInvoice = async (req, res) => {
 exports.getAllInvoices = async (req, res) => {
     try {
         const { page = 1, limit = 10, customerId } = req.query;
+
+        // Build query filter
+        const filter = {};
+        if (customerId) {
+            filter.customer = customerId;
+        }
+
+        // Calculate pagination
         const skip = (page - 1) * limit;
 
-        const pipeline = [
-            ...(customerId ? [{
-                $match: { customer: new mongoose.Types.ObjectId(customerId) }
-            }] : []),
+        // Fetch invoices with customer details
+        const invoices = await Invoice.find(filter)
+            .populate('customer', 'name email phone')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(parseInt(limit));
 
-            {
-                $lookup: {
-                    from: 'customers',
-                    localField: 'customer',
-                    foreignField: '_id',
-                    as: 'customer'
-                }
-            },
-
-            { $unwind: '$customer' },
-
-            { $sort: { createdAt: -1 } },
-
-            {
-                $facet: {
-                    metadata: [{ $count: 'total' }],
-                    data: [{ $skip: skip }, { $limit: parseInt(limit) }]
-                }
-            }
-        ];
-
-        const result = await Invoice.aggregate(pipeline);
-
-        const total = result[0].metadata[0]?.total || 0;
-        const invoices = result[0].data;
+        // Get total count for pagination
+        const total = await Invoice.countDocuments(filter);
 
         res.status(200).json({
             success: true,
@@ -121,26 +108,13 @@ exports.getAllInvoices = async (req, res) => {
     }
 };
 
+// Get invoice by ID
 exports.getInvoiceById = async (req, res) => {
     try {
-        const pipeline = [
-            {
-                $match: { _id: new mongoose.Types.ObjectId(req.params.id) }
-            },
-            {
-                $lookup: {
-                    from: 'customers',
-                    localField: 'customer',
-                    foreignField: '_id',
-                    as: 'customer'
-                }
-            },
-            { $unwind: '$customer' }
-        ];
+        const invoice = await Invoice.findById(req.params.id)
+            .populate('customer', 'name email phone');
 
-        const result = await Invoice.aggregate(pipeline);
-
-        if (!result || result.length === 0) {
+        if (!invoice) {
             return res.status(404).json({
                 success: false,
                 message: 'Invoice not found'
@@ -149,7 +123,7 @@ exports.getInvoiceById = async (req, res) => {
 
         res.status(200).json({
             success: true,
-            data: result[0]
+            data: invoice
         });
     } catch (error) {
         console.error('Error fetching invoice:', error);
